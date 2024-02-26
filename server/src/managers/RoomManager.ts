@@ -1,15 +1,14 @@
-import { User } from "./userManager";
+import { User } from "./UserManager";
 
 let GLOBAL_ROOM_ID = 1;
 
-// In RoomManager, we manage people in a room. As a room is created, a person sends a send-offer packet. Then this person sends his WebRTC Configuration.
-// When the server receives these responses, which is initHandlers method then it tells the user2 the user1 has sent an offer, now you can accept/reject it. Now, when user2 receives an offer they have to send back an anwer to user1.
-export interface Room {
+interface Room {
   user1: User;
   user2: User;
-  roomId: string;
 }
 
+// In RoomManager, we manage people in a room. As a room is created, a person sends a send-offer packet. Then this person sends his WebRTC Configuration.
+// When the server receives these responses, which is initHandlers method then it tells the user2 the user1 has sent an offer, now you can accept/reject it. Now, when user2 receives an offer they have to send back an anwer to user1.
 export class RoomManager {
   private rooms: Map<string, Room>;
   constructor() {
@@ -22,23 +21,56 @@ export class RoomManager {
       user1,
       user2,
     });
-    user1.socket.emit("new-room", {
+
+    user1.socket.emit("send-offer", {
+      roomId,
+    });
+
+    user2.socket.emit("send-offer", {
       roomId,
     });
   }
 
-  onOffer(roomId: string, sdp: string) {
-    const user2 = this.rooms.get(roomId)?.user2;
-    user2?.socket.emit("offer", {
+  onOffer(roomId: string, sdp: string, senderSocketid: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return;
+    }
+    const receivingUser =
+      room.user1.socket.id === senderSocketid ? room.user2 : room.user1;
+    receivingUser?.socket.emit("offer", {
       sdp,
+      roomId,
     });
   }
 
-  onAnswer(roomId: string, sdp: string) {
-    const user1 = this.rooms.get(roomId)?.user1;
-    user1?.socket.emit("offer", {
+  onAnswer(roomId: string, sdp: string, senderSocketid: string) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return;
+    }
+    const receivingUser =
+      room.user1.socket.id === senderSocketid ? room.user2 : room.user1;
+
+    receivingUser?.socket.emit("answer", {
       sdp,
+      roomId,
     });
+  }
+
+  onIceCandidates(
+    roomId: string,
+    senderSocketid: string,
+    candidate: any,
+    type: "sender" | "receiver",
+  ) {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return;
+    }
+    const receivingUser =
+      room.user1.socket.id === senderSocketid ? room.user2 : room.user1;
+    receivingUser.socket.emit("add-ice-candidate", { candidate, type });
   }
 
   generate() {
