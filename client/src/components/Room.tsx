@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Socket, io } from "socket.io-client";
 
@@ -10,11 +10,10 @@ export const Room = ({
   localVideoTrack,
 }: {
   name: string;
-  localAudioTrack: MediaStreamTrack;
-  localVideoTrack: MediaStreamTrack;
+  localAudioTrack: MediaStreamTrack | null;
+  localVideoTrack: MediaStreamTrack | null;
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const name = searchParams.get("name");
   const [socket, setSocket] = useState<null | Socket>(null);
   const [lobby, setLobby] = useState(true);
   const [sendingPc, setSendingPc] = useState<null | RTCPeerConnection>(null);
@@ -25,6 +24,10 @@ export const Room = ({
     useState<null | MediaStreamTrack>(null);
   const [remoteAudioTrack, setRemoteAudioTrack] =
     useState<null | MediaStreamTrack>(null);
+  const [remoteMediaStream, setRemoteMediaStream] =
+    useState<MediaStreamTrack | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | undefined>();
+  const localVideoRef = useRef<HTMLVideoElement | undefined>();
 
   useEffect(() => {
     const socket = io(URL);
@@ -33,10 +36,22 @@ export const Room = ({
       setLobby(false);
       const pc = new RTCPeerConnection();
       setSendingPc(pc);
-      pc.addTrack(localAudioTrack);
-      pc.addTrack(localVideoTrack);
 
-      pc.onicecandidate = () => {
+      if (localAudioTrack) {
+        pc.addTrack(localVideoTrack);
+      }
+
+      if (localAudioTrack) {
+        pc.addTrack(localAudioTrack);
+      }
+
+      pc.onicecandidate = async (e) => {
+        if (e.candidate) {
+          pc.addIceCandidate(e.candidate);
+        }
+      };
+
+      pc.onnegotiationneeded = async () => {
         const sdp = await pc.createOffer();
         socket.emit("offer", {
           sdp,
@@ -45,19 +60,30 @@ export const Room = ({
       };
     });
 
-    socket.on("offer", async ({ roomId, offer }) => {
+    socket.on("offer", async ({ roomId, sdp: remoteSdp }) => {
       setLobby(false);
       const pc = new RTCPeerConnection();
-      pc.setRemoteDescription({ sdp: offer, type: "offer" });
+      pc.setRemoteDescription(remoteSdp);
       const sdp = await pc.createAnswer();
+      const stream = new MediaStream();
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      }
+      setRemoteMediaStream(stream);
       // trickling
       setReceivingPc(pc);
       pc.ontrack = ({ track, type }) => {
         if (type == "audio") {
           setRemoteAudioTrack(track);
+          // @ts-ignore
+          remoteVideoRef.current.srcObject.addTrack(track);
         } else {
           setRemoteVideoTrack(track);
+          // @ts-ignore
+          remoteVideoRef.current.srcObject.addTrack(track);
         }
+        // @ts-ignore
+        remoteVideoRef.current.play();
       };
       socket.emit("answer", {
         roomId,
@@ -65,13 +91,10 @@ export const Room = ({
       });
     });
 
-    socket.on("answer", ({ roomId, answer }) => {
+    socket.on("answer", ({ roomId, sdp: remoteSdp }) => {
       setLobby(false);
       setSendingPc((pc) => {
-        pc?.setRemoteDescription({
-          type: "answer",
-          sdp: answer,
-        });
+        pc?.setRemoteDescription(remoteSdp);
         return pc;
       });
     });
@@ -87,11 +110,21 @@ export const Room = ({
     return <div>Waiting to connect you to someone</div>;
   }
 
+  useEffect(() => {
+    if (localVideoRef.current) {
+      if (localVideoTrack) {
+        localVideoRef.current.srcObject = new MediaStream([localVideoTrack]);
+        localVideoRef.current.play();
+      }
+    }
+  }, [localVideoRef]);
+
   return (
     <div>
       Hi {name}
-      <video width={400} height={400} />
-      <video width={400} height={400} />
+      <video autoPlay width={400} height={400} ref={localVideoRef} />
+      {lobby ? "Waiting to connect you to someone" : null}
+      <video autoPlay width={400} height={400} ref={remoteVideoRef} />
     </div>
   );
 };

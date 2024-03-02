@@ -39,6 +39,13 @@ export const Landing = () => {
         <video autoPlay ref={videoRef}></video>
         <input type="text" onChange={(e) => setName(e.target.value)} />
         <Link to={`/room/?name=${name}`}>Join</Link>
+        <button
+          onClick={() => {
+            setJoined(true);
+          }}
+        >
+          Join
+        </button>
       </div>
     );
   }
