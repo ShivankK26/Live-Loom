@@ -4,48 +4,88 @@ import { Socket, io } from "socket.io-client";
 
 const URL = "http://localhost:3000";
 
-export const Room = () => {
+export const Room = ({
+  name,
+  localAudioTrack,
+  localVideoTrack,
+}: {
+  name: string;
+  localAudioTrack: MediaStreamTrack;
+  localVideoTrack: MediaStreamTrack;
+}) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const name = searchParams.get("name");
   const [socket, setSocket] = useState<null | Socket>(null);
   const [lobby, setLobby] = useState(true);
+  const [sendingPc, setSendingPc] = useState<null | RTCPeerConnection>(null);
+  const [receivingPc, setReceivingPc] = useState<null | RTCPeerConnection>(
+    null,
+  );
+  const [remoteVideoTrack, setRemoteVideoTrack] =
+    useState<null | MediaStreamTrack>(null);
+  const [remoteAudioTrack, setRemoteAudioTrack] =
+    useState<null | MediaStreamTrack>(null);
 
   useEffect(() => {
     const socket = io(URL);
 
-    socket.on("send-offer", ({ roomId }) => {
-      alert("Please send offer!");
+    socket.on("send-offer", async ({ roomId }) => {
       setLobby(false);
-      socket.emit("offer", {
-        sdp: "",
-        roomId,
-      });
+      const pc = new RTCPeerConnection();
+      setSendingPc(pc);
+      pc.addTrack(localAudioTrack);
+      pc.addTrack(localVideoTrack);
+
+      pc.onicecandidate = () => {
+        const sdp = await pc.createOffer();
+        socket.emit("offer", {
+          sdp,
+          roomId,
+        });
+      };
     });
 
-    socket.on("offer", ({ roomId, offer }) => {
-      alert("Please send answer!");
+    socket.on("offer", async ({ roomId, offer }) => {
       setLobby(false);
+      const pc = new RTCPeerConnection();
+      pc.setRemoteDescription({ sdp: offer, type: "offer" });
+      const sdp = await pc.createAnswer();
+      // trickling
+      setReceivingPc(pc);
+      pc.ontrack = ({ track, type }) => {
+        if (type == "audio") {
+          setRemoteAudioTrack(track);
+        } else {
+          setRemoteVideoTrack(track);
+        }
+      };
       socket.emit("answer", {
         roomId,
-        sdp: "",
+        sdp: sdp,
       });
     });
 
     socket.on("answer", ({ roomId, answer }) => {
       setLobby(false);
-      alert("Connection established!");
+      setSendingPc((pc) => {
+        pc?.setRemoteDescription({
+          type: "answer",
+          sdp: answer,
+        });
+        return pc;
+      });
     });
 
     socket.on("lobby", () => {
       setLobby(true);
     });
 
-    if (lobby) {
-      return <div>Waiting to connect you to someone</div>;
-    }
-
     setSocket(socket);
   }, [name]);
+
+  if (lobby) {
+    return <div>Waiting to connect you to someone</div>;
+  }
 
   return (
     <div>
